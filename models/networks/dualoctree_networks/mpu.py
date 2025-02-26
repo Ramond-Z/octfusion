@@ -38,35 +38,44 @@ def linear_basis(x):
 
 def get_linear_mask(dim=3):
     mask = torch.tensor([0, 1], dtype=torch.float32)
-    mask = torch.meshgrid([mask]*dim)
+    mask = torch.meshgrid([mask] * dim)
     mask = torch.stack(mask, -1).view(-1, dim)
     return mask
 
-#    mask = tensor([[0., 0., 0.],
-#                 [0., 0., 1.],
-#                 [0., 1., 0.],
-#                 [0., 1., 1.],
-#                 [1., 0., 0.],
-#                 [1., 0., 1.],
-#                 [1., 1., 0.],
-#                 [1., 1., 1.]])
+
+# mask = tensor(
+#     [[0., 0., 0.],
+#      [0., 0., 1.],
+#      [0., 1., 0.],
+#      [0., 1., 1.],
+#      [1., 0., 0.],
+#      [1., 0., 1.],
+#      [1., 1., 0.],
+#      [1., 1., 1.]]
+# )
 
 
 def octree_linear_pts(octree, depth, pts):
     # get neigh coordinates
-    scale = 2 ** depth     ## 在特定深度depth下的scale为2**depth
+    scale = 2 ** depth  # 在特定深度depth下的scale为2**depth
     mask = get_linear_mask(dim=3).to(pts.device)
-    xyzf, ids = torch.split(pts, [3, 1], 1)    # 将pos[N, 4]分解为前三个（坐标）xyzf和最后一个（batch_idx）ids
-    xyzf = (xyzf + 1.0) * (scale / 2.0)        # [-1, 1] -> [0, scale] 将xyz坐标放缩到[0, scale]
-    xyzf = xyzf - 0.5                                            # the code is defined on the center
-    xyzi = torch.floor(xyzf).detach()            # the integer part (N, 3), use floor
-    corners = xyzi.unsqueeze(1) + mask         # (N, 8, 3), 得到这N个点的周围8个corner的坐标，也就是 [N,8,3]，这里corner的坐标都是整数，在[0,scale]范围内
+    # 将pos[N, 4]分解为前三个（坐标）xyzf和最后一个（batch_idx）ids
+    xyzf, ids = torch.split(pts, [3, 1], 1)
+    # [-1, 1] -> [0, scale] 将xyz坐标放缩到[0, scale]
+    xyzf = (xyzf + 1.0) * (scale / 2.0)
+    # the code is defined on the center
+    xyzf = xyzf - 0.5
+    # the integer part (N, 3), use floor
+    xyzi = torch.floor(xyzf).detach()
+    # (N, 8, 3), 得到这N个点的周围8个corner的坐标，也就是 [N,8,3]，这里corner的坐标都是整数，在[0,scale]范围内
+    corners = xyzi.unsqueeze(1) + mask
     coordsf = xyzf.unsqueeze(1) - corners    # (N, 8, 3), in [-1.0, 1.0]
 
     # coorers -> key
     ids = ids.detach().repeat(1, kNN).unsqueeze(-1)             # (N, 8, 1)
     key = torch.cat([corners, ids], dim=-1).view(-1, 4).short()    # (N*8, 4)
-    key = xyz2key(x = key[:,0], y = key[:,1], z = key[:,2], b = key[:,3]).long()    # (N*8, )
+    key = xyz2key(x=key[:, 0], y=key[:, 1], z=key[:, 2],
+                  b=key[:, 3]).long()    # (N*8, )
     idx = octree.search_key(key, depth)        # (N*8, )
     # key = ocnn.octree_encode_key(key).long()                                         # (N*8, )
     # idx = ocnn.octree_search_key(key, octree, depth, key_is_xyz=True)
@@ -81,16 +90,19 @@ def octree_linear_pts(octree, depth, pts):
     coordsf = coordsf.view(-1, 3)[flgs]    # (N, 8, 3) -> (N', 3)
 
     # bspline weights
-    weights = linear_basis(coordsf)                                         # (N', 3)
+    # (N', 3)
+    weights = linear_basis(coordsf)
     weights = torch.prod(weights, axis=-1).view(-1)         # (N', )
     # Here, the scale factor `2**(depth - 6)` is used to emphasize high-resolution
     # basis functions. Tune this factor further if needed! !!! NOTE !!!
     # weights = weights * 2**(depth - 6)                                 # used for shapenet
-    weights = weights * (depth**2 / 50)                                    # testing
+    # testing
+    weights = weights * (depth**2 / 50)
 
     # rescale back the original scale
     # After recaling, the coordsf is in the same scale as pts
-    coordsf = coordsf * (2.0 / scale)     # [-1.0, 1.0] -> [-2.0/scale, 2.0/scale] 这一步相当于，把[0,scale]的坐标重新缩小到[-1,1]的尺度上
+    # [-1.0, 1.0] -> [-2.0/scale, 2.0/scale] 这一步相当于，把[0,scale]的坐标重新缩小到[-1,1]的尺度上
+    coordsf = coordsf * (2.0 / scale)
     return {'idx': idx, 'xyzf': coordsf, 'weights': weights, 'flgs': flgs}
 
 
@@ -102,7 +114,7 @@ def get_linear_pred(pts, octree, shape_code, neighs, depth_start, depth_end):
     # nnum_cum = ocnn.octree_property(octree, 'node_num_cum')
     ids = torch.arange(npt, device=pts.device, dtype=torch.long)
     ids = ids.unsqueeze(-1).repeat(1, kNN).view(-1)
-    for d in range(depth_start, depth_end+1):
+    for d in range(depth_start, depth_end + 1):
         neighd = neighs[d]
         idxd = neighd['idx']
         xyzfd = neighd['xyzf']
@@ -125,9 +137,23 @@ def get_linear_pred(pts, octree, shape_code, neighs, depth_start, depth_end):
     xyzfs = torch.cat(xyzfs, dim=0)
 
     code_num = shape_code.size(0)
-    output = modulated_spmm(indices, weights, npt, code_num, shape_code, xyzfs)
-    norm = spmm(indices, weights, npt, code_num, torch.ones(code_num, 1).cuda()) # 这里norm的维度为[N,]
-    output = torch.div(output, norm + 1e-8).squeeze()    # 这里output的维度为[N, 1]（也就是每个查询点的sdf值）
+    output = modulated_spmm(
+        indices,
+        weights,
+        npt,
+        code_num,
+        shape_code,
+        xyzfs
+    )
+    norm = spmm(
+        indices,
+        weights,
+        npt,
+        code_num,
+        torch.ones(code_num, 1).cuda()
+    )  # 这里norm的维度为[N,]
+    # 这里output的维度为[N, 1]（也就是每个查询点的sdf值）
+    output = torch.div(output, norm + 1e-8).squeeze()
 
     # whether the point has affected by the octree node in depth layer
     mask = neighs[depth_end]['flgs'].view(-1, kNN).any(axis=-1)
@@ -140,14 +166,21 @@ class NeuralMPU:
         self.depth_stop = depth_stop
         self.depth = depth
 
-    def __call__(self, pos, reg_voxs, octree_out): # reg_voxs就是dual octree的每个节点中存储的vector，其维度为4
+    # reg_voxs就是dual octree的每个节点中存储的vector，其维度为4
+    def __call__(self, pos, reg_voxs, octree_out):
         mpus = dict()
         neighs = dict()
-        for d in range(self.full_depth, self.depth+1):
+        for d in range(self.full_depth, self.depth + 1):
             neighs[d] = octree_linear_pts(octree_out, d, pos)
 
-        for d in range(self.depth_stop, self.depth+1):
+        for d in range(self.depth_stop, self.depth + 1):
             fval, flgs = get_linear_pred(
-                    pos, octree_out, reg_voxs[d], neighs, self.full_depth, d)
+                pos,
+                octree_out,
+                reg_voxs[d],
+                neighs,
+                self.full_depth,
+                d
+            )
             mpus[d] = (fval, flgs)
         return mpus
