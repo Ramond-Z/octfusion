@@ -37,8 +37,8 @@ data:
         distort: False
 
         # data loading
-        location: &location data/ShapeNet/dataset_10w
-        filelist: &filelist data/ShapeNet/filelist
+        location: &location /home/zhoucz/HDD/datasets/ShapeNet_10w
+        filelist: &filelist /home/zhoucz/HDD/datasets/OctFusionFilelist
         load_octree: &load_octree False
         load_pointcloud: &load_pointcloud True
         load_split_small: &load_split_small False

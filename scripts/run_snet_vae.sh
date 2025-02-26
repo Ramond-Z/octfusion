@@ -2,7 +2,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 DATE_WITH_TIME=`date "+%Y-%m-%dT%H-%M-%S"`
 
-logs_dir='logs'
+logs_dir='output/logs'
 
 ### set gpus ###
 # gpu_ids=0          # single-gpu
@@ -99,7 +99,7 @@ echo "[*] Training with command: "
 
 if [ $multi_gpu = 1 ]; then
 
-    cmd="--nnodes=1 --nproc_per_node=${NGPU} --rdzv-backend=c10d --rdzv-endpoint=${HOST_NODE_ADDR}  ${cmd}"
+    cmd="--nnodes=1 --nproc_per_node=${NGPU} --rdzv_backend=c10d --rdzv_endpoint=${HOST_NODE_ADDR}  ${cmd}"
     echo "CUDA_VISIBLE_DEVICES=${gpu_ids} torchrun ${cmd}"
     CUDA_VISIBLE_DEVICES=${gpu_ids} torchrun ${cmd}
 
